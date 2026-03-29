@@ -164,17 +164,38 @@ def _extract_attachment_links(soup: BeautifulSoup) -> list[str]:
 def _parse_detail_page(soup: BeautifulSoup) -> dict:
     info: dict = {"attachment_urls": _extract_attachment_links(soup)}
 
+    # Try structured overview section first
     overview_section = soup.find("div", class_="tenderOverview") or soup.find("div", id=re.compile(r"overview", re.I))
     if overview_section:
         info["description"] = overview_section.get_text(separator="\n", strip=True)
     else:
-        longest = ""
-        for div in soup.find_all("div"):
-            text = div.get_text(" ", strip=True)
-            if len(text) > len(longest):
-                longest = text
-        if len(longest) > 200:
-            info["description"] = longest[:5000]
+        # Look for h2 "Overview" and grab sibling/following content
+        overview_heading = soup.find(["h2", "h3"], string=re.compile(r"overview", re.I))
+        if overview_heading:
+            parts: list[str] = []
+            for sibling in overview_heading.find_next_siblings():
+                tag = sibling.name or ""
+                if tag in ("h1", "h2", "h3") and sibling != overview_heading:
+                    break
+                text = sibling.get_text(" ", strip=True)
+                if text:
+                    parts.append(text)
+            if parts:
+                info["description"] = "\n".join(parts)[:5000]
+
+        # Final fallback: largest div that does NOT contain the nav menu
+        if "description" not in info:
+            nav_terms = {"create account", "current tenders", "late tenders", "closed tenders"}
+            longest = ""
+            for div in soup.find_all("div"):
+                text = div.get_text(" ", strip=True)
+                lower = text.lower()
+                if any(term in lower for term in nav_terms):
+                    continue
+                if len(text) > len(longest):
+                    longest = text
+            if len(longest) > 200:
+                info["description"] = longest[:5000]
 
     for row in soup.find_all("tr"):
         cells = row.find_all(["th", "td"])
@@ -260,10 +281,14 @@ def _parse_closing_date(date_str: str | None) -> str | None:
     return None
 
 
-def _determine_status(closing_iso: str | None, status_label: str | None, text: str | None = None) -> str:
-    combined = " ".join(part for part in [status_label or "", text or ""] if part).lower()
-    if any(term in combined for term in ["award", "awarded", "cancelled", "canceled", "closed"]):
-        return "closed"
+def _determine_status(closing_iso: str | None, status_label: str | None) -> str:
+    # Only check the structured status label from the metadata table — never
+    # the full description, which includes GETS nav-menu text like "Closed tenders"
+    # that would false-positive every single tender.
+    if status_label:
+        label = status_label.strip().lower()
+        if any(term in label for term in ["awarded", "cancelled", "canceled", "closed"]):
+            return "closed"
 
     if closing_iso:
         try:
@@ -321,7 +346,7 @@ def scrape_gets(max_pages: int = 11) -> list[RawTender]:
 
         closing_raw = detail_info.get("closing_date") or listing.get("closing_date")
         closing_iso = _parse_closing_date(closing_raw)
-        status = _determine_status(closing_iso, detail_info.get("status_label"), relevance_text)
+        status = _determine_status(closing_iso, detail_info.get("status_label"))
 
         tender = RawTender(
             title=title,
