@@ -33,12 +33,14 @@ The default enrichment prompt is tuned for a senior Technical BA / Integration A
 
 ## Product shape
 
-The dashboard has seven working views:
+The dashboard currently exposes nine product views:
 
 - `Overview`
   A market snapshot with top opportunities, closings soon, hiring-window distribution, and relevance distribution.
+- `Recent Changes`
+  Newly discovered tenders, recent additions, and the latest run summary.
 - `Pipeline`
-  The main tender explorer with search, filters, export, and detailed tender drill-downs.
+  The main tender explorer with search, preset views, filters, export, attachment visibility, and detailed tender drill-downs.
 - `Agencies`
   Agency activity ranked by tender count, open count, and average relevance.
 - `Tech`
@@ -49,6 +51,8 @@ The dashboard has seven working views:
   Expected timing for when work from a tender is likely to turn into delivery and hiring.
 - `Themes`
   Common programme patterns such as migration, integration, modernisation, or regulatory work.
+- `Admin`
+  Runtime health, enrichment profile visibility, last-run errors, and deployment-mode checks.
 
 ## How it works
 
@@ -58,7 +62,7 @@ GovRadar has four parts.
 
 `scraper/gets_scraper.py`
 
-The scraper walks GETS listing pages, follows tender detail links, and keeps tenders that match a configurable keyword set. It is designed for the public GETS HTML interface rather than browser automation, so the implementation stays lightweight and easy to maintain.
+The scraper walks GETS listing pages, follows tender detail links, keeps tenders that match a configurable keyword set, and attempts to pull limited text from linked PDF attachments when those documents are discoverable from the public tender page. It is designed for the public GETS HTML interface rather than browser automation, so the implementation stays lightweight and easy to maintain.
 
 ### 2. AI enrichment
 
@@ -75,6 +79,8 @@ Each relevant tender is sent to Anthropic for structured analysis. The model ret
 - themes
 
 If the enrichment call fails or returns malformed JSON, the run falls back to a safe default payload rather than crashing the entire pipeline.
+
+The enrichment metadata also records the model name and prompt version so the dashboard can show which profile generated the current scores.
 
 ### 3. Supabase storage
 
@@ -260,29 +266,36 @@ For a private deployment, the app itself should also be access-controlled.
 
 The workflow in `.github/workflows/scrape.yml` uses two UTC cron entries and a timezone guard so the scraper targets 7:30am Auckland time across DST changes.
 
+Each scheduled run writes a Markdown summary to `reports/latest_run_summary.md`, uploads it as a workflow artifact, and can post that summary to Slack if `SLACK_WEBHOOK_URL` is configured.
+
 Recommended GitHub repository secrets:
 
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `ANTHROPIC_API_KEY`
+- `SLACK_WEBHOOK_URL` (optional)
 
 Legacy fallback:
 
 - `SUPABASE_KEY`
+
+The repo also includes `.github/workflows/ci.yml`, which runs the unit test suite on push, pull request, and manual dispatch.
 
 ## Dashboard features
 
 The current app includes:
 
 - full-text search across title, agency, category, description, and enrichment fields
+- preset views for `High Relevance`, `Closing Soon`, `Health Focus`, `Integration & APIs`, and `New This Run`
 - minimum relevance filtering
 - agency and category filters
 - optional 70+ relevance view
 - multiple sort modes
 - CSV export for the filtered result set
 - spotlight cards for top opportunities
-- structured tender detail drill-downs
+- structured tender detail drill-downs with attachment visibility
 - scrape freshness and recent-run visibility
+- an operational admin panel showing credential mode, enrichment health, and latest-run errors
 
 ## Tuning and customisation
 
@@ -312,9 +325,10 @@ Adjust:
 ## Operational notes
 
 - GETS structure can change. The scraper includes fallback table detection, but the site should be checked if results suddenly drop to zero.
-- The enrichment pipeline is only as good as the text available in the tender description. PDF attachment parsing is not implemented yet.
+- PDF extraction is opportunistic rather than guaranteed. Some GETS attachments may be inaccessible, image-based, or non-PDF formats.
 - Existing tenders are not automatically re-scored if the prompt/profile changes.
 - The dashboard is read-only by design. All writes happen in the scraper path.
+- The scraper preserves `first_seen_at` and updates `last_seen_at`, which enables recent-discovery tracking without creating duplicate tenders.
 
 ## Troubleshooting
 
@@ -350,12 +364,11 @@ GovRadar is already useful, but it is still a focused v1 product.
 
 Not built yet:
 
-- PDF attachment extraction
-- alerting or notifications
 - historical trend baselining
 - re-scoring historical tenders after prompt changes
-- automated test coverage
+- richer notification channels than Slack webhook summaries
 - migration tooling beyond the bootstrap SQL scripts
+- authentication inside the Streamlit app itself
 
 ## In practice
 

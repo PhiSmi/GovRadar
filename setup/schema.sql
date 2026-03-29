@@ -8,6 +8,9 @@ create table if not exists tender_scrape_runs (
     run_date timestamptz not null default now(),
     tenders_found int not null default 0,
     tenders_new int not null default 0,
+    high_relevance_found int not null default 0,
+    closing_soon_count int not null default 0,
+    summary text,
     errors text
 );
 
@@ -34,6 +37,21 @@ create table if not exists tenders (
 );
 
 alter table tenders
+    add column if not exists rfx_id text,
+    add column if not exists attachment_urls text[] not null default '{}',
+    add column if not exists attachment_text_excerpt text,
+    add column if not exists first_seen_at timestamptz not null default now(),
+    add column if not exists last_seen_at timestamptz not null default now(),
+    add column if not exists enrichment_model text,
+    add column if not exists enrichment_prompt_version text,
+    add column if not exists enrichment_updated_at timestamptz;
+
+alter table tender_scrape_runs
+    add column if not exists high_relevance_found int not null default 0,
+    add column if not exists closing_soon_count int not null default 0,
+    add column if not exists summary text;
+
+alter table tenders
     drop constraint if exists tenders_status_check,
     drop constraint if exists tenders_programme_size_check,
     drop constraint if exists tenders_relevance_score_check,
@@ -57,8 +75,11 @@ create index if not exists idx_tenders_closing on tenders(closing_date);
 create index if not exists idx_tenders_agency on tenders(agency);
 create index if not exists idx_tenders_status on tenders(status);
 create index if not exists idx_tenders_date_scraped on tenders(date_scraped desc);
+create index if not exists idx_tenders_first_seen on tenders(first_seen_at desc);
+create index if not exists idx_tenders_last_seen on tenders(last_seen_at desc);
 
-create or replace view agency_activity as
+create or replace view agency_activity
+with (security_invoker = true) as
 select
     agency,
     count(*) as tender_count,
@@ -69,7 +90,8 @@ where agency is not null and agency <> ''
 group by agency
 order by tender_count desc;
 
-create or replace view theme_summary as
+create or replace view theme_summary
+with (security_invoker = true) as
 select
     unnest(themes) as theme,
     count(*) as mention_count
@@ -77,7 +99,8 @@ from tenders
 group by theme
 order by mention_count desc;
 
-create or replace view role_demand as
+create or replace view role_demand
+with (security_invoker = true) as
 select
     unnest(probable_roles) as role,
     count(*) as demand_count,
@@ -86,13 +109,21 @@ from tenders
 group by role
 order by demand_count desc;
 
-create or replace view tech_trends as
+create or replace view tech_trends
+with (security_invoker = true) as
 select
     unnest(probable_tech_stack) as technology,
     count(*) as mention_count
 from tenders
 group by technology
 order by mention_count desc;
+
+revoke all on tenders from public;
+revoke all on tender_scrape_runs from public;
+revoke all on agency_activity from public;
+revoke all on theme_summary from public;
+revoke all on role_demand from public;
+revoke all on tech_trends from public;
 
 grant usage on schema public to anon, authenticated, service_role;
 

@@ -46,4 +46,13 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: python -m scraper.run
+
+      - name: Upload scrape summary
+        if: steps.schedule_guard.outputs.should_run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: govradar-scrape-summary
+          path: reports/latest_run_summary.md
+          if-no-files-found: ignore

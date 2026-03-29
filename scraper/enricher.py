@@ -1,10 +1,12 @@
 """AI enrichment of tenders using Claude API."""
 
 from __future__ import annotations
+
 import json
 import logging
 import os
 import time
+from datetime import datetime, timezone
 
 import anthropic
 
@@ -12,6 +14,9 @@ from scraper.gets_scraper import RawTender
 
 logger = logging.getLogger(__name__)
 _client: anthropic.Anthropic | None = None
+
+ENRICHMENT_MODEL = "claude-sonnet-4-20250514"
+ENRICHMENT_PROMPT_VERSION = "v2"
 
 ENRICHMENT_PROMPT = """\
 You are analysing a New Zealand government tender for a career-focused intelligence tool.
@@ -21,13 +26,13 @@ across NZ government, health, and banking sectors. Key skills: API design, integ
 AWS, Azure, Salesforce, data migration, requirements analysis, stakeholder management.
 
 Analyse this tender and return a JSON object with these fields:
-- probable_tech_stack: array of technologies likely involved (e.g. ["AWS", "Salesforce", "REST APIs"])
-- probable_roles: array of roles this tender will likely need (e.g. ["Business Analyst", "Solution Architect", "Developer"])
+- probable_tech_stack: array of technologies likely involved
+- probable_roles: array of roles this tender will likely need
 - programme_size: one of "small", "medium", "large", "mega"
-- relevance_score: 0-100 integer — how relevant is this to the user's profile
+- relevance_score: 0-100 integer
 - relevance_reasoning: one sentence explaining the score
-- estimated_seek_timeline: when roles from this tender will likely appear on job boards — one of "3 months", "6 months", "9 months", "12 months"
-- themes: array of themes (e.g. ["modernisation", "data migration", "regulatory", "greenfield", "integration"])
+- estimated_seek_timeline: one of "3 months", "6 months", "9 months", "12 months"
+- themes: array of themes
 
 Respond with ONLY the JSON object, no markdown fencing or explanation.
 
@@ -38,8 +43,11 @@ Type: {tender_type}
 Category: {category}
 Estimated Value: {estimated_value}
 
-Description:
+Tender Description:
 {description}
+
+Supporting Attachment Excerpt:
+{attachment_excerpt}
 """
 
 
@@ -53,8 +61,22 @@ def _get_client() -> anthropic.Anthropic:
     return _client
 
 
+def _coerce_list(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [str(value).strip()] if str(value).strip() else []
+
+
+def _coerce_score(value) -> int:
+    try:
+        return max(0, min(100, int(value)))
+    except (TypeError, ValueError):
+        return 0
+
+
 def enrich_tender(tender: RawTender, client: anthropic.Anthropic | None = None) -> dict:
-    """Call Claude to analyse a single tender. Returns enrichment fields dict."""
     client = client or _get_client()
 
     prompt = ENRICHMENT_PROMPT.format(
@@ -63,18 +85,17 @@ def enrich_tender(tender: RawTender, client: anthropic.Anthropic | None = None) 
         tender_type=tender.tender_type or "Not specified",
         category=tender.category or "Not specified",
         estimated_value=tender.estimated_value or "Not specified",
-        description=(tender.description or "No description available")[:4000],
+        description=(tender.description or "No description available")[:5000],
+        attachment_excerpt=(tender.attachment_text_excerpt or "No attachment text available")[:2500],
     )
 
     try:
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=ENRICHMENT_MODEL,
             max_tokens=1024,
             messages=[{"role": "user", "content": prompt}],
         )
         text = response.content[0].text.strip()
-
-        # Strip markdown fencing if present
         if text.startswith("```"):
             text = text.split("\n", 1)[1] if "\n" in text else text[3:]
         if text.endswith("```"):
@@ -82,21 +103,20 @@ def enrich_tender(tender: RawTender, client: anthropic.Anthropic | None = None) 
         text = text.strip()
 
         data = json.loads(text)
-
         return {
-            "probable_tech_stack": data.get("probable_tech_stack", []),
-            "probable_roles": data.get("probable_roles", []),
+            "probable_tech_stack": _coerce_list(data.get("probable_tech_stack")),
+            "probable_roles": _coerce_list(data.get("probable_roles")),
             "programme_size": data.get("programme_size", "medium"),
-            "relevance_score": int(data.get("relevance_score", 0)),
-            "relevance_reasoning": data.get("relevance_reasoning", ""),
+            "relevance_score": _coerce_score(data.get("relevance_score")),
+            "relevance_reasoning": str(data.get("relevance_reasoning", ""))[:500],
             "estimated_seek_timeline": data.get("estimated_seek_timeline", "6 months"),
-            "themes": data.get("themes", []),
+            "themes": _coerce_list(data.get("themes")),
         }
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse Claude response for '{tender.title}': {e}")
+    except json.JSONDecodeError as error:
+        logger.error("Failed to parse Claude response for '%s': %s", tender.title, error)
         return _empty_enrichment()
-    except Exception as e:
-        logger.error(f"Claude API error for '{tender.title}': {e}")
+    except Exception as error:
+        logger.error("Claude API error for '%s': %s", tender.title, error)
         return _empty_enrichment()
 
 
@@ -113,15 +133,12 @@ def _empty_enrichment() -> dict:
 
 
 def enrich_all(tenders: list[RawTender], delay: float = 1.0) -> list[dict]:
-    """Enrich a list of tenders, returning list of dicts ready for DB insert.
-
-    Each dict merges the raw tender data with enrichment fields.
-    """
     client = _get_client()
     results = []
-    for i, tender in enumerate(tenders):
-        logger.info(f"Enriching {i + 1}/{len(tenders)}: {tender.title[:60]}...")
+    for index, tender in enumerate(tenders):
+        logger.info("Enriching %s/%s: %s...", index + 1, len(tenders), tender.title[:60])
         enrichment = enrich_tender(tender, client=client)
+        now = datetime.now(timezone.utc).isoformat()
 
         row = {
             "title": tender.title,
@@ -129,15 +146,23 @@ def enrich_all(tenders: list[RawTender], delay: float = 1.0) -> list[dict]:
             "closing_date": tender.closing_date,
             "gets_url": tender.gets_url,
             "tender_type": tender.tender_type,
+            "rfx_id": tender.rfx_id,
             "estimated_value": tender.estimated_value,
             "status": tender.status,
             "category": tender.category,
-            "description": (tender.description or "")[:10000],
+            "description": (tender.description or "")[:12000],
+            "attachment_urls": tender.attachment_urls,
+            "attachment_text_excerpt": (tender.attachment_text_excerpt or "")[:8000] or None,
+            "date_scraped": tender.date_scraped or now,
+            "last_seen_at": tender.date_scraped or now,
+            "enrichment_model": ENRICHMENT_MODEL,
+            "enrichment_prompt_version": ENRICHMENT_PROMPT_VERSION,
+            "enrichment_updated_at": now,
             **enrichment,
         }
         results.append(row)
 
-        if i < len(tenders) - 1:
+        if index < len(tenders) - 1:
             time.sleep(delay)
 
     return results
