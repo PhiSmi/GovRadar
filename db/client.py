@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
 import os
+import time
 from dataclasses import dataclass
 
 import requests
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -39,24 +43,43 @@ class SupabaseRestClient:
         params: dict[str, str] | None = None,
         json: dict | list | None = None,
         headers: dict[str, str] | None = None,
+        timeout: int = 60,
+        retries: int = 3,
     ) -> requests.Response:
-        response = self.session.request(
-            method,
-            f"{self.url}/rest/v1/{path.lstrip('/')}",
-            params=params,
-            json=json,
-            headers=headers,
-            timeout=30,
-        )
+        url = f"{self.url}/rest/v1/{path.lstrip('/')}"
+        last_error: Exception | None = None
 
-        if response.ok:
-            return response
+        for attempt in range(1, retries + 1):
+            try:
+                response = self.session.request(
+                    method,
+                    url,
+                    params=params,
+                    json=json,
+                    headers=headers,
+                    timeout=timeout,
+                )
 
-        try:
-            payload = response.json()
-        except ValueError:
-            payload = response.text
-        raise PostgrestError(str(payload))
+                if response.ok:
+                    return response
+
+                try:
+                    payload = response.json()
+                except ValueError:
+                    payload = response.text
+                raise PostgrestError(str(payload))
+
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+                last_error = exc
+                if attempt < retries:
+                    wait = 2 ** attempt
+                    logger.warning(
+                        "Supabase %s %s attempt %s/%s failed (%s), retrying in %ss...",
+                        method, path, attempt, retries, type(exc).__name__, wait,
+                    )
+                    time.sleep(wait)
+                else:
+                    raise
 
     def select(
         self,

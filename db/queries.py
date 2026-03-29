@@ -163,7 +163,7 @@ def tender_exists(gets_url: str) -> bool:
     return len(result.data or []) > 0
 
 
-def get_existing_tender_urls(gets_urls: list[str], batch_size: int = 100) -> set[str]:
+def get_existing_tender_urls(gets_urls: list[str], batch_size: int = 25) -> set[str]:
     if not gets_urls:
         return set()
 
