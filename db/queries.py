@@ -22,7 +22,11 @@ def _lte(value) -> str:
 
 
 def _in(values: list[str]) -> str:
-    quoted = ",".join(f'"{str(value).replace(chr(34), "\\\"")}"' for value in values)
+    quoted_items = []
+    for value in values:
+        escaped = str(value).replace('"', '\\"')
+        quoted_items.append(f'"{escaped}"')
+    quoted = ",".join(quoted_items)
     return f"in.({quoted})"
 
 
