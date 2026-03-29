@@ -17,10 +17,12 @@ logger = logging.getLogger(__name__)
 
 
 def run(max_pages: int = 11):
-    run_id = create_scrape_run()
+    run_id: str | None = None
     errors: list[str] = []
 
     try:
+        run_id = create_scrape_run()
+
         # 1. Scrape
         tenders = scrape_gets(max_pages=max_pages)
         logger.info(f"Scraped {len(tenders)} relevant tenders")
@@ -57,7 +59,11 @@ def run(max_pages: int = 11):
 
     except Exception as e:
         logger.exception(f"Fatal error in scrape run: {e}")
-        update_scrape_run(run_id, found=0, new=0, errors=str(e))
+        if run_id:
+            try:
+                update_scrape_run(run_id, found=0, new=0, errors=str(e))
+            except Exception as update_error:
+                logger.error(f"Could not update scrape run status: {update_error}")
         sys.exit(1)
 
 

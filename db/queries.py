@@ -1,9 +1,18 @@
 from __future__ import annotations
-from datetime import datetime
-from db.client import get_client
+
+from datetime import datetime, timezone
+from urllib.parse import quote
+
+from db.client import get_read_client, get_write_client
 
 
-# ── Reads ─────────────────────────────────────────────────────────────
+def _eq(value: str) -> str:
+    return f"eq.{quote(str(value), safe='')}"
+
+
+def _gte(value: int) -> str:
+    return f"gte.{value}"
+
 
 def get_tenders(
     status: str | None = None,
@@ -12,84 +21,59 @@ def get_tenders(
     category: str | None = None,
     limit: int = 200,
 ):
-    q = get_client().table("tenders").select("*")
+    params = {
+        "select": "*",
+        "order": "relevance_score.desc,closing_date.asc.nullslast",
+        "limit": str(limit),
+    }
     if status:
-        q = q.eq("status", status)
+        params["status"] = _eq(status)
     if min_relevance > 0:
-        q = q.gte("relevance_score", min_relevance)
+        params["relevance_score"] = _gte(min_relevance)
     if agency:
-        q = q.eq("agency", agency)
+        params["agency"] = _eq(agency)
     if category:
-        q = q.eq("category", category)
-    return q.order("relevance_score", desc=True).limit(limit).execute().data
+        params["category"] = _eq(category)
+    return get_read_client().select("tenders", params=params).data or []
 
 
 def get_agencies():
-    return (
-        get_client()
-        .table("agency_activity")
-        .select("*")
-        .execute()
-        .data
-    )
+    params = {"select": "*", "order": "tender_count.desc"}
+    return get_read_client().select("agency_activity", params=params).data or []
 
 
 def get_role_demand():
-    return (
-        get_client()
-        .table("role_demand")
-        .select("*")
-        .execute()
-        .data
-    )
+    params = {"select": "*", "order": "demand_count.desc"}
+    return get_read_client().select("role_demand", params=params).data or []
 
 
 def get_tech_trends():
-    return (
-        get_client()
-        .table("tech_trends")
-        .select("*")
-        .execute()
-        .data
-    )
+    params = {"select": "*", "order": "mention_count.desc"}
+    return get_read_client().select("tech_trends", params=params).data or []
 
 
 def get_theme_summary():
-    return (
-        get_client()
-        .table("theme_summary")
-        .select("*")
-        .execute()
-        .data
-    )
+    params = {"select": "*", "order": "mention_count.desc"}
+    return get_read_client().select("theme_summary", params=params).data or []
 
 
 def get_scrape_runs(limit: int = 10):
-    return (
-        get_client()
-        .table("tender_scrape_runs")
-        .select("*")
-        .order("run_date", desc=True)
-        .limit(limit)
-        .execute()
-        .data
-    )
+    params = {"select": "*", "order": "run_date.desc", "limit": str(limit)}
+    return get_read_client().select("tender_scrape_runs", params=params).data or []
 
 
 def get_overview_stats():
-    client = get_client()
-    all_t = client.table("tenders").select("id", count="exact").execute()
-    open_t = (
-        client.table("tenders")
-        .select("id", count="exact")
-        .eq("status", "open")
-        .execute()
+    client = get_read_client()
+    all_t = client.select("tenders", params={"select": "id"}, count="exact")
+    open_t = client.select(
+        "tenders",
+        params={"select": "id", "status": _eq("open")},
+        count="exact",
     )
-    high = (
-        client.table("tenders")
-        .select("id", count="exact")
-        .gte("relevance_score", 70)
-        .execute()
+    high = client.select(
+        "tenders",
+        params={"select": "id", "relevance_score": _gte(70)},
+        count="exact",
     )
     return {
         "total": all_t.count or 0,
@@ -99,60 +83,39 @@ def get_overview_stats():
 
 
 def get_distinct_agencies():
-    rows = (
-        get_client()
-        .table("tenders")
-        .select("agency")
-        .execute()
-        .data
-    )
-    return sorted({r["agency"] for r in rows if r.get("agency")})
+    rows = get_read_client().select("tenders", params={"select": "agency"}).data or []
+    return sorted({row["agency"] for row in rows if row.get("agency")})
 
 
 def get_distinct_categories():
-    rows = (
-        get_client()
-        .table("tenders")
-        .select("category")
-        .execute()
-        .data
-    )
-    return sorted({r["category"] for r in rows if r.get("category")})
+    rows = get_read_client().select("tenders", params={"select": "category"}).data or []
+    return sorted({row["category"] for row in rows if row.get("category")})
 
-
-# ── Writes ────────────────────────────────────────────────────────────
 
 def tender_exists(gets_url: str) -> bool:
-    res = (
-        get_client()
-        .table("tenders")
-        .select("id")
-        .eq("gets_url", gets_url)
-        .execute()
+    result = get_write_client().select(
+        "tenders",
+        params={"select": "id", "gets_url": _eq(gets_url), "limit": "1"},
     )
-    return len(res.data) > 0
+    return len(result.data or []) > 0
 
 
 def upsert_tender(data: dict):
-    return (
-        get_client()
-        .table("tenders")
-        .upsert(data, on_conflict="gets_url")
-        .execute()
-    )
+    return get_write_client().upsert("tenders", data, on_conflict="gets_url")
 
 
 def create_scrape_run() -> str:
-    res = (
-        get_client()
-        .table("tender_scrape_runs")
-        .insert({"run_date": datetime.utcnow().isoformat()})
-        .execute()
+    result = get_write_client().insert(
+        "tender_scrape_runs",
+        {"run_date": datetime.now(timezone.utc).isoformat()},
     )
-    return res.data[0]["id"]
+    rows = result.data or []
+    return rows[0]["id"]
 
 
 def update_scrape_run(run_id: str, found: int, new: int, errors: str | None = None):
-    get_client().table("tender_scrape_runs").update(
-        {"tenders_found": found, "tenders_new": new, "errors": errors}
-    ).eq("id", run_id).execute()
+    get_write_client().update(
+        "tender_scrape_runs",
+        filters={"id": _eq(run_id)},
+        payload={"tenders_found": found, "tenders_new": new, "errors": errors},
+    )

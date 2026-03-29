@@ -11,6 +11,7 @@ import anthropic
 from scraper.gets_scraper import RawTender
 
 logger = logging.getLogger(__name__)
+_client: anthropic.Anthropic | None = None
 
 ENRICHMENT_PROMPT = """\
 You are analysing a New Zealand government tender for a career-focused intelligence tool.
@@ -42,9 +43,19 @@ Description:
 """
 
 
-def enrich_tender(tender: RawTender) -> dict:
+def _get_client() -> anthropic.Anthropic:
+    global _client
+    if _client is None:
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+        if not api_key:
+            raise RuntimeError("ANTHROPIC_API_KEY must be set")
+        _client = anthropic.Anthropic(api_key=api_key)
+    return _client
+
+
+def enrich_tender(tender: RawTender, client: anthropic.Anthropic | None = None) -> dict:
     """Call Claude to analyse a single tender. Returns enrichment fields dict."""
-    client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+    client = client or _get_client()
 
     prompt = ENRICHMENT_PROMPT.format(
         title=tender.title,
@@ -106,10 +117,11 @@ def enrich_all(tenders: list[RawTender], delay: float = 1.0) -> list[dict]:
 
     Each dict merges the raw tender data with enrichment fields.
     """
+    client = _get_client()
     results = []
     for i, tender in enumerate(tenders):
         logger.info(f"Enriching {i + 1}/{len(tenders)}: {tender.title[:60]}...")
-        enrichment = enrich_tender(tender)
+        enrichment = enrich_tender(tender, client=client)
 
         row = {
             "title": tender.title,

@@ -2,9 +2,8 @@ name: Daily GETS Scrape
 
 on:
   schedule:
-    # 7:30am NZST = 18:30 UTC (previous day) during NZST
-    # 7:30am NZDT = 18:30 UTC (previous day) during NZDT
     - cron: "30 18 * * *"
+    - cron: "30 19 * * *"
   workflow_dispatch:
 
 jobs:
@@ -13,16 +12,38 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check Auckland run window
+        id: schedule_guard
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          local_time="$(TZ=Pacific/Auckland date +%H:%M)"
+          echo "Auckland local time: $local_time"
+
+          if [ "$local_time" = "07:30" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/setup-python@v5
+        if: steps.schedule_guard.outputs.should_run == 'true'
         with:
           python-version: "3.11"
 
       - name: Install dependencies
+        if: steps.schedule_guard.outputs.should_run == 'true'
         run: pip install -r requirements.txt
 
       - name: Run scraper
+        if: steps.schedule_guard.outputs.should_run == 'true'
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: python -m scraper.run
