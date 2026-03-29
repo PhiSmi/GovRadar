@@ -47,11 +47,22 @@ def _dedupe_rows(rows: list[dict]) -> list[dict]:
     return list(by_url.values())
 
 
+def _warmup_db() -> None:
+    """Wake Supabase if it has paused due to inactivity (free tier)."""
+    from db.client import get_write_client
+    try:
+        get_write_client().select("tenders", params={"select": "id", "limit": "1"})
+        logger.info("Database connection warmed up.")
+    except Exception as exc:
+        logger.warning("DB warmup ping failed (will retry normally): %s", exc)
+
+
 def run(max_pages: int = 11):
     run_id: str | None = None
     errors: list[str] = []
 
     try:
+        _warmup_db()
         run_id = create_scrape_run()
 
         tenders = scrape_gets(max_pages=max_pages)

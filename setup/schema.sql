@@ -70,6 +70,7 @@ alter table tenders
             or estimated_seek_timeline in ('3 months', '6 months', '9 months', '12 months')
         );
 
+create index if not exists idx_tenders_gets_url on tenders(gets_url);
 create index if not exists idx_tenders_relevance on tenders(relevance_score desc);
 create index if not exists idx_tenders_closing on tenders(closing_date);
 create index if not exists idx_tenders_agency on tenders(agency);
