@@ -1,201 +1,193 @@
 # GovRadar
 
-**NZ Government Tender Intelligence for IT/Digital/Health Professionals**
+## What is this?
 
-GovRadar monitors the NZ Government Electronic Tenders Service ([GETS](https://www.gets.govt.nz)) for IT, digital, health, and professional services tenders. Each tender is enriched with AI analysis (via Claude) to estimate relevance, likely tech stacks, roles needed, programme size, and when resulting job opportunities will appear on the market. Results are stored in Supabase and presented through a Streamlit dashboard.
+If you work in IT contracting or consulting in New Zealand, you've probably noticed a pattern: by the time a role appears on Seek or a recruiter calls you, the project has already been in motion for months. The agency tendered on GETS six months ago, a vendor won the work three months ago, and now they're finally hiring. You're always reacting.
 
-The goal: **6-12 month advance visibility** on upcoming contract opportunities by watching what government agencies are tendering for today.
+GovRadar flips that around. It watches the [NZ Government Electronic Tenders Service (GETS)](https://www.gets.govt.nz) every day, pulls down tenders related to IT, digital, health, and professional services, and runs each one through an AI model to answer the questions that actually matter to a contractor:
 
----
+- What tech stack will this probably involve?
+- What roles will they need?
+- How big is this programme?
+- How relevant is this to *my* specific skills and experience?
+- When will this likely turn into actual job postings on Seek?
 
-## Table of Contents
-
-- [How It Works](#how-it-works)
-- [Project Structure](#project-structure)
-- [Prerequisites](#prerequisites)
-- [Setup](#setup)
-  - [1. Database (Supabase)](#1-database-supabase)
-  - [2. Environment Variables](#2-environment-variables)
-  - [3. Install Dependencies](#3-install-dependencies)
-- [Running the Scraper](#running-the-scraper)
-  - [Manual Run](#manual-run)
-  - [Automated (GitHub Actions)](#automated-github-actions)
-  - [What the Scraper Does Step by Step](#what-the-scraper-does-step-by-step)
-- [Running the Dashboard](#running-the-dashboard)
-  - [Locally](#locally)
-  - [Streamlit Community Cloud](#streamlit-community-cloud)
-- [Dashboard Tabs](#dashboard-tabs)
-- [Database Schema](#database-schema)
-  - [Tables](#tables)
-  - [Views](#views)
-  - [Row Level Security](#row-level-security)
-- [AI Enrichment](#ai-enrichment)
-  - [What Gets Analysed](#what-gets-analysed)
-  - [Relevance Profile](#relevance-profile)
-  - [Changing the Profile](#changing-the-profile)
-  - [Model and Cost](#model-and-cost)
-- [Scraper Details](#scraper-details)
-  - [Target Keywords](#target-keywords)
-  - [Rate Limiting](#rate-limiting)
-  - [GETS Page Structure](#gets-page-structure)
-  - [Pagination](#pagination)
-  - [Date Parsing](#date-parsing)
-  - [Upsert Behaviour](#upsert-behaviour)
-- [Configuration Reference](#configuration-reference)
-- [Updating and Maintaining](#updating-and-maintaining)
-  - [Adding New Keywords](#adding-new-keywords)
-  - [Changing the AI Model](#changing-the-ai-model)
-  - [Adjusting the Scrape Schedule](#adjusting-the-scrape-schedule)
-  - [Changing Pagination Depth](#changing-pagination-depth)
-  - [Modifying Dashboard Layout](#modifying-dashboard-layout)
-  - [Adding New Database Columns](#adding-new-database-columns)
-- [Architecture Decisions](#architecture-decisions)
-- [Troubleshooting](#troubleshooting)
-- [Future Iterations](#future-iterations)
+The result is a live dashboard that gives you **6-12 months of advance visibility** on where the market is heading — which agencies are spending, what technologies they're buying, and when the opportunities will materialise.
 
 ---
 
-## How It Works
+## Who is this for?
 
-```
-GETS (gets.govt.nz)          Claude API              Supabase             Streamlit
-┌─────────────────┐     ┌──────────────────┐    ┌──────────────┐    ┌──────────────┐
-│  Listing pages  │────>│  Scraper parses  │───>│  AI enriches │───>│  Upsert to   │───>│  Dashboard   │
-│  Detail pages   │     │  title, agency,  │    │  each tender │    │  tenders     │    │  reads and   │
-│  (25 per page)  │     │  dates, desc     │    │  with Claude │    │  table       │    │  displays    │
-└─────────────────┘     └──────────────────┘    └──────────────┘    └──────────────┘
-        │                                                                    │
-        │  2.5s delay between requests                                       │
-        │  Respectful user-agent header                                      │
-        └────────────────────────────────────────────────────────────────────┘
-                              Daily via GitHub Actions (7:30am NZST)
-```
+GovRadar was built for a specific persona — a Senior Technical BA / Integration Analyst with deep NZ government and health sector experience — but the relevance profile is fully configurable. If you're any kind of IT professional working in or around NZ government, you can adapt it to your own skills and watch the tenders that matter to you.
 
-1. **Scrape**: The scraper crawls GETS listing pages, fetches each tender's detail page, and filters for IT/digital/health relevance using keyword matching against the title and description.
-2. **Enrich**: Each relevant tender is sent to Claude Sonnet for analysis. Claude returns structured JSON with tech stack predictions, role forecasts, relevance scoring, timeline estimates, and theme classification.
-3. **Store**: Enriched tenders are upserted to Supabase (insert new, update existing) keyed on the GETS URL. Each run is tracked in a separate `tender_scrape_runs` table.
-4. **Display**: The Streamlit dashboard reads from Supabase and presents the data across six analytical views with sidebar filters.
+Typical users:
+- **IT contractors** who want early signal on upcoming programmes before recruiters get involved
+- **Consultants** scoping which agencies are active and what kind of work is coming up
+- **Team leads or practice managers** at consultancies tracking where to position their people
+- **Anyone curious** about what the NZ government is actually spending on in the tech space
 
 ---
 
-## Project Structure
+## What does it actually look like?
+
+The dashboard has six views, all fed from the same data:
+
+**Pipeline** — the main table. Every tender sorted by how relevant it is to you, with expandable cards showing the AI's full analysis. You see the title, the agency, closing date, relevance score, programme size, and when roles will likely hit the market. Click into any tender for tech stack predictions, role forecasts, themes, and a direct link to the GETS listing.
+
+**Agency Activity** — which government agencies are tendering the most. If the Ministry of Health has put out 12 tenders this quarter and most of them score 80+ for you, that's a signal worth paying attention to.
+
+**Tech Trends** — aggregate view of what technologies are appearing across tenders. If AWS keeps showing up more than Azure, or if Salesforce mentions are climbing, that tells you where to invest your upskilling time.
+
+**Role Demand** — what roles tenders are likely to generate. Business Analysts, Solution Architects, Developers, Testers — see what the market will need before the market knows it needs it.
+
+**Timeline** — groups everything by when opportunities will likely appear. "3 months" means roles from this tender could hit Seek soon. "12 months" means it's early days but worth tracking.
+
+**Themes** — the nature of the work. Modernisation, migration, greenfield, regulatory compliance, integration. Shows you what kind of projects are dominating.
+
+The sidebar has filters for status (open/closed), minimum relevance score, specific agency, and category. At the bottom it shows your recent scrape history so you know the data is fresh.
+
+---
+
+## How it works
+
+There are three moving parts: a scraper, an AI enrichment step, and a dashboard. They're connected by a Supabase database.
+
+### The scraper
+
+Every morning at 7:30am NZST (via GitHub Actions, or whenever you run it manually), the scraper hits GETS and works through the tender listings. GETS shows 25 tenders per page in an HTML table. The scraper:
+
+1. Loads the listing pages (up to 11 pages, so ~275 tenders)
+2. For each tender, follows the link to its detail page to get the full description
+3. Checks whether the tender is relevant using keyword matching — does the title or description mention things like "digital", "integration", "cloud", "health", "API", "migration", etc.
+4. If it's relevant, keeps it. If not, skips it.
+
+The scraper is polite — it waits 2.5 seconds between every request and identifies itself with a custom user agent. GETS serves plain HTML so there's no need for browser automation.
+
+### The AI enrichment
+
+Each relevant tender gets sent to Claude (Anthropic's AI) for structured analysis. The prompt includes the tender title, agency, type, category, estimated value, and description. Claude returns a JSON object with:
+
+- **Probable tech stack** — what technologies this project will likely involve
+- **Probable roles** — what positions the programme will need to fill
+- **Programme size** — small, medium, large, or mega
+- **Relevance score** — 0 to 100, calibrated against your professional profile
+- **Relevance reasoning** — a one-sentence explanation of why it scored the way it did
+- **Estimated Seek timeline** — when this tender will likely result in job postings (3, 6, 9, or 12 months)
+- **Themes** — modernisation, migration, greenfield, regulatory, integration, etc.
+
+The model used is Claude Sonnet 4. Each tender costs roughly 1-3 cents to analyse, so a typical daily run with 10-50 relevant tenders costs between 10 cents and $1.50.
+
+### The database
+
+Everything lands in Supabase (PostgreSQL). Two tables: `tenders` for the data and `tender_scrape_runs` for tracking each execution. Four database views handle the aggregations (agency activity, tech trends, role demand, theme summary) so the dashboard just reads pre-computed data.
+
+Tenders are upserted on their GETS URL, so running the scraper twice on the same day is harmless — it'll update existing records rather than creating duplicates.
+
+### The dashboard
+
+A Streamlit app that reads from Supabase and renders the six views described above. Runs locally or deploys to Streamlit Community Cloud for free. The dashboard only needs read access to the database — it never writes anything.
+
+---
+
+## A day in the life
+
+Here's what using GovRadar actually looks like in practice:
+
+**Monday morning, 7:35am** — GitHub Actions has already run the scraper. You open the dashboard over coffee and check the Pipeline tab. Three new tenders appeared over the weekend. One is a large health sector integration programme from Te Whatu Ora — relevance score 87. The AI thinks it'll need BAs, Solution Architects, and Integration Developers, probably using Azure and HL7/FHIR. Estimated timeline: 6 months before roles appear on Seek.
+
+**You note it down.** In six months you'll be wrapping up your current contract. This could be the next one.
+
+**Thursday** — you check the Agency Activity tab and notice the Ministry of Business, Innovation and Employment has gone from 2 tenders last month to 7 this month. Something is happening over there. You switch to Tech Trends and see Salesforce mentions have doubled in the last few weeks. Maybe worth brushing up on that Salesforce cert.
+
+**End of month** — you look at the Timeline view. There are 4 tenders in the "3 months" bucket, all scoring above 70. That aligns with when your current contract ends. You start reaching out to recruiters who work with those agencies, armed with specific knowledge about what's coming.
+
+**None of this information is secret.** It's all on GETS, publicly available. GovRadar just saves you from manually trawling through hundreds of tenders, most of which are for road construction or office supplies, and adds the analytical layer that turns raw tender data into career intelligence.
+
+---
+
+## Tech stack
+
+| Component | Technology | Why |
+|---|---|---|
+| **Scraper** | Python, Requests, BeautifulSoup | GETS serves static HTML — no JS rendering needed, so lightweight HTTP requests and HTML parsing are enough |
+| **AI enrichment** | Anthropic Claude API (Sonnet 4) | Structured analysis of unstructured tender descriptions — tech stack prediction, role forecasting, relevance scoring |
+| **Database** | Supabase (PostgreSQL) | Hosted PostgreSQL with a Python SDK, accessible from GitHub Actions and Streamlit Cloud without managing infrastructure. Shares a project with ContractRadar |
+| **Dashboard** | Streamlit | Rapid data-focused web apps. Free hosting on Streamlit Community Cloud. Good for tables, charts, and filters without writing frontend code |
+| **Automation** | GitHub Actions | Free CI/CD for public repos. Runs the scraper on a daily cron schedule |
+| **Language** | Python 3.11+ | Everything is Python — scraper, enrichment, database layer, dashboard |
+
+Dependencies (all in `requirements.txt`):
+- `streamlit` — dashboard framework
+- `supabase` — database client
+- `anthropic` — Claude API client
+- `requests` — HTTP for scraping
+- `beautifulsoup4` — HTML parsing
+- `pandas` — data manipulation in the dashboard
+
+---
+
+## Project structure
 
 ```
 govradar/
-├── app.py                          # Streamlit dashboard (entry point for the UI)
+├── app.py                          # Streamlit dashboard — the main UI
 ├── scraper/
-│   ├── __init__.py
-│   ├── gets_scraper.py             # GETS web scraper — fetches and parses tenders
-│   ├── enricher.py                 # Claude AI enrichment — analyses each tender
-│   └── run.py                      # Orchestrator — ties scrape + enrich + store together
+│   ├── gets_scraper.py             # Scrapes GETS listing + detail pages
+│   ├── enricher.py                 # Sends tenders to Claude for AI analysis
+│   └── run.py                      # Orchestrator — scrape, enrich, store
 ├── db/
-│   ├── __init__.py
-│   ├── client.py                   # Supabase client singleton
-│   └── queries.py                  # All database read/write functions
+│   ├── client.py                   # Supabase connection (singleton pattern)
+│   └── queries.py                  # All database reads and writes
 ├── setup/
-│   └── schema.sql                  # Database schema — run once in Supabase SQL Editor
+│   └── schema.sql                  # Tables, views, indexes, RLS — run once in Supabase
 ├── .github/
 │   └── workflows/
-│       └── scrape.yml              # GitHub Actions daily scrape workflow
-├── requirements.txt                # Python dependencies
-├── .env.example                    # Template for environment variables
-├── .env                            # Your actual env vars (gitignored)
-├── .gitignore
-└── README.md                       # This file
+│       └── scrape.yml              # Daily GitHub Actions cron job
+├── requirements.txt
+├── .env.example                    # Template for your secrets
+├── .env                            # Your actual secrets (gitignored)
+└── .gitignore
 ```
 
 ---
 
-## Prerequisites
+## Getting started
 
-- **Python 3.11+**
-- **Supabase account** — free tier works fine. This project shares a Supabase project with ContractRadar (same project, different tables).
-- **Anthropic API key** — for Claude AI enrichment. Each scrape run uses roughly 1 API call per relevant tender found.
-- **GitHub account** — for the automated daily scrape via GitHub Actions (optional for local use).
+### 1. Set up the database
 
----
+Open your Supabase project, go to the **SQL Editor**, paste the contents of `setup/schema.sql`, and run it. This creates everything — tables, views, indexes, and security policies.
 
-## Setup
+You'll need two keys from Supabase (Settings > API):
+- The **anon/publishable key** — for the dashboard (read-only)
+- The **service role key** — for the scraper (read + write). Keep this one secret.
 
-### 1. Database (Supabase)
-
-1. Open your Supabase project dashboard.
-2. Go to **SQL Editor**.
-3. Paste the entire contents of `setup/schema.sql` and click **Run**.
-
-This creates:
-- `tender_scrape_runs` table (tracks each scrape execution)
-- `tenders` table (the main data — raw fields + AI enrichment fields)
-- 5 indexes for query performance
-- 4 database views (`agency_activity`, `theme_summary`, `role_demand`, `tech_trends`)
-- Row Level Security policies (public read, service-role write)
-
-**Important**: You need two different Supabase keys for different purposes:
-- **Publishable key** (`anon` key): Used by the Streamlit dashboard for read-only access. Find it in Supabase > Settings > API > `anon` `public`.
-- **Service role key**: Used by the scraper for write access (inserts/updates). Find it in Supabase > Settings > API > `service_role`. **Never commit this key.**
-
-### 2. Environment Variables
-
-Copy the template:
+### 2. Configure environment variables
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` with your actual values:
+Fill in your `.env`:
 
-```env
+```
 SUPABASE_URL=https://your-project-id.supabase.co
-SUPABASE_KEY=your-service-role-key-here
-ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
+SUPABASE_KEY=your-service-role-key
+ANTHROPIC_API_KEY=sk-ant-api03-your-key
 ```
 
-| Variable | Where to find it | Used by |
-|---|---|---|
-| `SUPABASE_URL` | Supabase > Settings > API > Project URL | Scraper + Dashboard |
-| `SUPABASE_KEY` | Supabase > Settings > API > `service_role` (for scraper) or `anon` (for dashboard) | Scraper + Dashboard |
-| `ANTHROPIC_API_KEY` | console.anthropic.com > API Keys | Scraper only |
-
-The `.env` file is gitignored and will not be committed.
-
-### 3. Install Dependencies
+### 3. Install and run
 
 ```bash
 pip install -r requirements.txt
-```
 
-Dependencies:
-| Package | Version | Purpose |
-|---|---|---|
-| `streamlit` | >= 1.30.0 | Dashboard web framework |
-| `supabase` | >= 2.0.0 | Database client |
-| `anthropic` | >= 0.40.0 | Claude API client for AI enrichment |
-| `requests` | >= 2.31.0 | HTTP requests for scraping GETS |
-| `beautifulsoup4` | >= 4.12.0 | HTML parsing |
-| `pandas` | >= 2.0.0 | Data manipulation in the dashboard |
-
----
-
-## Running the Scraper
-
-### Manual Run
-
-From the project root:
-
-```bash
+# Run the scraper (first run populates the database)
 python -m scraper.run
+
+# Launch the dashboard
+streamlit run app.py
 ```
 
-This will:
-1. Create a new scrape run record in `tender_scrape_runs`.
-2. Crawl up to 11 pages of GETS listings (275 tenders max).
-3. Fetch the detail page for each tender (with 2.5s delay between requests).
-4. Filter for IT/digital/health relevance using keyword matching.
-5. Send each relevant tender to Claude for AI analysis.
-6. Upsert results to the `tenders` table in Supabase.
-7. Update the scrape run record with counts and any errors.
-
-Logs are printed to stdout with timestamps:
+The scraper takes 10-30 minutes depending on how many tenders are on GETS. It logs progress as it goes:
 
 ```
 08:30:01 INFO Starting GETS scrape...
@@ -207,435 +199,177 @@ Logs are printed to stdout with timestamps:
 08:35:22 INFO Done — 18 found, 12 new, 0 errors
 ```
 
-**Expected runtime**: 10-30 minutes depending on how many tenders are on GETS and how many are relevant (2.5s per GETS page request + 1s per Claude API call).
+The dashboard opens at `http://localhost:8501`.
 
-### Automated (GitHub Actions)
+### 4. Automate it
 
-The workflow at `.github/workflows/scrape.yml` runs the scraper automatically.
-
-**Schedule**: Daily at `18:30 UTC` which is approximately **7:30am NZST** (or 7:30am NZDT during daylight saving — GitHub Actions uses UTC so the local time shifts by one hour with DST).
-
-**Manual trigger**: You can also run it on-demand from the GitHub Actions tab > "Daily GETS Scrape" > "Run workflow".
-
-**Required GitHub secrets** (Settings > Secrets and variables > Actions):
+Push the repo to GitHub and add three secrets to your repository (Settings > Secrets and variables > Actions):
 
 | Secret | Value |
 |---|---|
 | `SUPABASE_URL` | Your Supabase project URL |
-| `SUPABASE_KEY` | Your Supabase **service role** key |
+| `SUPABASE_KEY` | Your Supabase service role key |
 | `ANTHROPIC_API_KEY` | Your Anthropic API key |
 
-### What the Scraper Does Step by Step
+The GitHub Actions workflow runs the scraper every day at 7:30am NZST. You can also trigger it manually from the Actions tab.
 
-```
-scraper/run.py          →  Orchestrator
-  ├── creates scrape run record in DB
-  ├── calls scrape_gets()
-  │     ├── fetches GETS index page (page 1)
-  │     ├── parses listing table rows
-  │     ├── paginates through pages 2-11
-  │     ├── for each tender listing:
-  │     │     ├── fetches the detail page
-  │     │     ├── parses description, category, agency, dates, value
-  │     │     └── checks relevance via keyword matching
-  │     └── returns list of RawTender objects
-  ├── calls enrich_all()
-  │     └── for each tender:
-  │           ├── sends title + agency + type + description to Claude
-  │           ├── Claude returns JSON with analysis
-  │           └── merges raw data + enrichment into a dict
-  └── for each enriched tender:
-        ├── checks if it already exists (by gets_url)
-        ├── upserts to tenders table
-        └── updates scrape run with final counts
-```
+### 5. Deploy the dashboard
 
----
+For always-on access, deploy to Streamlit Community Cloud:
 
-## Running the Dashboard
-
-### Locally
-
-```bash
-streamlit run app.py
-```
-
-Opens at `http://localhost:8501`. Requires `SUPABASE_URL` and `SUPABASE_KEY` to be set (either in `.env` or as environment variables).
-
-**Tip**: For local dashboard use, the publishable/anon key is sufficient since the dashboard only reads data.
-
-### Streamlit Community Cloud
-
-1. Push the repo to GitHub.
-2. Go to [share.streamlit.io](https://share.streamlit.io) and deploy from your repo.
-3. Set the main file path to `app.py`.
-4. In the Streamlit Cloud app settings, add secrets:
+1. Push to GitHub
+2. Go to [share.streamlit.io](https://share.streamlit.io) and connect your repo
+3. Set `app.py` as the main file
+4. Add secrets in the Streamlit Cloud settings:
 
 ```toml
 SUPABASE_URL = "https://your-project-id.supabase.co"
-SUPABASE_KEY = "your-anon-key-here"
+SUPABASE_KEY = "your-anon-key"
 ```
 
-The dashboard reads secrets via `st.secrets` and falls back to environment variables. You do not need the Anthropic API key for the dashboard — it only reads from the database.
+Note: the dashboard only needs the anon key, not the service role key.
 
 ---
 
-## Dashboard Tabs
+## How the scraper decides what's relevant
 
-### Pipeline
-The main view. Shows a sortable table of all tenders matching your filters with columns: title, agency, tender type, closing date, relevance score, programme size, estimated Seek timeline, and status.
+Before any tender gets sent to Claude (which costs money), the scraper does a quick keyword check. If the title or description contains any of these terms, it's considered relevant:
 
-Below the table are **expandable detail cards** for the top 20 tenders. Each card shows:
-- Tender type, closing date, estimated value, programme size
-- Relevance score (0-100), Seek timeline, category
-- Why it's relevant (AI reasoning)
-- Probable tech stack, roles needed, themes
-- Link to the original GETS page
+> information technology, digital, software, data, cloud, cyber, integration, system, platform, health, ICT, API, infrastructure, analytics, migration, modernisation, modernization, transformation, professional services, consulting, advisory
 
-### Agency Activity
-Bar chart and table showing which agencies are tendering most frequently. Columns: agency name, total tender count, open tender count, average relevance score.
+A tender only needs to match one keyword. This casts a deliberately wide net — the AI enrichment step then assigns a proper relevance score that separates the genuinely interesting tenders from the noise.
 
-### Tech Trends
-Bar chart and table of technologies appearing across tenders (e.g. AWS, Salesforce, REST APIs). Shows which technologies government agencies are buying — useful for upskilling decisions.
-
-### Role Demand
-Bar chart and table of roles tenders will likely generate (e.g. Business Analyst, Solution Architect, Developer). Shows what the market will need.
-
-### Timeline
-Groups tenders by their estimated Seek timeline (3/6/9/12 months). Shows when current tenders will likely result in contractor/job postings.
-
-### Themes
-Bar chart and table of themes across tenders (e.g. modernisation, migration, greenfield, regulatory, integration). Shows the nature of upcoming work.
-
-### Sidebar
-- **Filters**: Status (All/open/closed), minimum relevance score (slider 0-100), agency dropdown, category dropdown.
-- **Scrape history**: Shows the last 5 scrape runs with date, tenders found, and new tenders added.
+You can edit this list in `scraper/gets_scraper.py` (the `TARGET_KEYWORDS` list). Add `"machine learning"` or `"security"` or whatever matches your interests. Changes apply on the next scrape run.
 
 ---
 
-## Database Schema
+## How the AI scoring works
 
-### Tables
-
-#### `tender_scrape_runs`
-Tracks each execution of the scraper.
-
-| Column | Type | Description |
-|---|---|---|
-| `id` | uuid (PK) | Auto-generated |
-| `run_date` | timestamptz | When the scrape ran |
-| `tenders_found` | int | Total relevant tenders found in this run |
-| `tenders_new` | int | How many were new (not previously seen) |
-| `errors` | text | Error messages, if any (semicolon-separated) |
-
-#### `tenders`
-The main table — one row per tender. Combines raw scraped data with AI enrichment.
-
-| Column | Type | Description |
-|---|---|---|
-| `id` | uuid (PK) | Auto-generated |
-| `title` | text | Tender title from GETS |
-| `agency` | text | Government agency / buyer |
-| `closing_date` | date | When the tender closes for submissions |
-| `category` | text | UNSPSC procurement category |
-| `description` | text | Full description from the GETS detail page |
-| `gets_url` | text (unique) | URL to the tender on GETS — used as dedup key |
-| `tender_type` | text | RFP, RFI, ROI, EOI, RFQ, RFT, NOI, etc. |
-| `estimated_value` | text | Contract value if shown on GETS |
-| `status` | text | `open` or `closed` — derived from closing date |
-| `date_scraped` | timestamptz | When we first scraped this tender |
-| `probable_tech_stack` | text[] | AI-predicted technologies (PostgreSQL array) |
-| `probable_roles` | text[] | AI-predicted roles needed |
-| `programme_size` | text | `small`, `medium`, `large`, or `mega` |
-| `relevance_score` | int | 0-100 relevance to your profile |
-| `relevance_reasoning` | text | One-sentence explanation of the score |
-| `estimated_seek_timeline` | text | `3 months`, `6 months`, `9 months`, or `12 months` |
-| `themes` | text[] | AI-identified themes (modernisation, migration, etc.) |
-| `scrape_run_id` | uuid (FK) | Links to `tender_scrape_runs.id` |
-
-### Views
-
-These are database views that auto-aggregate data from the `tenders` table. The dashboard queries them directly.
-
-| View | What it shows |
-|---|---|
-| `agency_activity` | Agency name, total tender count, open count, average relevance. Ordered by tender count descending. |
-| `theme_summary` | Each theme and how many tenders mention it. Uses PostgreSQL `unnest()` on the themes array. |
-| `role_demand` | Each role, demand count, and average relevance of tenders needing that role. |
-| `tech_trends` | Each technology and how many tenders mention it. |
-
-### Row Level Security
-
-Both tables have RLS enabled:
-- **Read**: Public (anyone with the anon key can read — the dashboard uses this).
-- **Insert/Update**: Open policies (the service role key is needed for actual writes through the Supabase client).
-
-### Indexes
-
-| Index | Column(s) | Purpose |
-|---|---|---|
-| `idx_tenders_relevance` | `relevance_score DESC` | Fast sorting by relevance |
-| `idx_tenders_closing` | `closing_date` | Date range queries |
-| `idx_tenders_agency` | `agency` | Agency filter |
-| `idx_tenders_status` | `status` | Open/closed filter |
-| `idx_tenders_date_scraped` | `date_scraped DESC` | Recent tenders first |
-
----
-
-## AI Enrichment
-
-### What Gets Analysed
-
-For each tender, Claude receives:
-- Title
-- Agency
-- Tender type (RFP/RFI/etc.)
-- Category
-- Estimated value
-- Description (first 4,000 characters)
-
-### What Claude Returns
-
-A structured JSON object with:
-
-| Field | Type | Example |
-|---|---|---|
-| `probable_tech_stack` | string array | `["AWS", "Salesforce", "REST APIs", "Azure AD"]` |
-| `probable_roles` | string array | `["Business Analyst", "Solution Architect", "Developer"]` |
-| `programme_size` | string | `"large"` |
-| `relevance_score` | int (0-100) | `82` |
-| `relevance_reasoning` | string | `"Large-scale health system integration aligning with BA/integration experience"` |
-| `estimated_seek_timeline` | string | `"6 months"` |
-| `themes` | string array | `["modernisation", "integration", "health"]` |
-
-### Relevance Profile
-
-The AI scoring is calibrated to this profile (defined in `scraper/enricher.py`):
+The enrichment prompt in `scraper/enricher.py` tells Claude about the target user:
 
 > Senior Technical Business Analyst / Integration Analyst with 10+ years experience across NZ government, health, and banking sectors. Key skills: API design, integration architecture, AWS, Azure, Salesforce, data migration, requirements analysis, stakeholder management.
 
-A score of **70+** is considered "high relevance" and is tracked as a metric on the dashboard.
+Claude uses this to score each tender from 0-100. A tender for a large health system integration using Azure and APIs will score in the 80s or 90s. A tender for website design will score in the teens. The dashboard treats 70+ as "high relevance" and tracks it as a headline metric.
 
-### Changing the Profile
-
-Edit the `ENRICHMENT_PROMPT` string in `scraper/enricher.py` (line 15). Update the user description paragraph to match a different role/skillset. The AI will recalibrate all future scores accordingly. Existing tenders in the database will keep their old scores unless you re-run enrichment.
-
-### Model and Cost
-
-- **Model**: `claude-sonnet-4-20250514` (Claude Sonnet 4)
-- **Max tokens per call**: 1,024
-- **Approximate cost**: ~$0.01-0.03 per tender (depends on description length)
-- **Typical run**: 10-50 relevant tenders = ~$0.10-$1.50 per daily run
+**To change the profile**, edit the `ENRICHMENT_PROMPT` string in `scraper/enricher.py`. Rewrite the user description to match your own background. Future scrape runs will score against the new profile. Existing tenders keep their old scores.
 
 ---
 
-## Scraper Details
+## Database details
 
-### Target Keywords
+### Tables
 
-The scraper filters tenders by checking if any of these keywords appear in the title or description (case-insensitive). Defined in `scraper/gets_scraper.py`:
+**`tenders`** — one row per tender. Raw fields from GETS (title, agency, closing date, description, URL, type, value, status) plus AI enrichment fields (tech stack, roles, programme size, relevance score, reasoning, Seek timeline, themes). Keyed on `gets_url` which has a unique constraint.
 
-```
-information technology, digital, software, data, cloud, cyber,
-integration, system, platform, health, ICT, API, infrastructure,
-analytics, migration, modernisation, modernization, transformation,
-professional services, consulting, advisory
-```
+**`tender_scrape_runs`** — one row per scraper execution. Tracks when it ran, how many tenders it found, how many were new, and any errors.
 
-A tender only needs to match **one** keyword to be considered relevant and sent for AI enrichment.
+### Views
 
-### Rate Limiting
+These are PostgreSQL views that auto-aggregate from the tenders table. The dashboard queries them directly — no application-level aggregation needed.
 
-- **2.5 seconds** between every HTTP request to GETS (`DELAY` constant in `gets_scraper.py`).
-- **1.0 seconds** between Claude API calls (`delay` parameter in `enrich_all()`).
-- Custom `User-Agent` header: `GovRadar/1.0 (NZ tender monitor)`.
-- Uses `requests.Session()` for connection reuse.
+- **`agency_activity`** — tender count, open count, and average relevance per agency
+- **`tech_trends`** — how many tenders mention each technology (uses `unnest` on the tech stack array)
+- **`role_demand`** — how many tenders will need each role, with average relevance
+- **`theme_summary`** — count of tenders per theme
 
-### GETS Page Structure
+### Security
 
-- **Index page**: `https://www.gets.govt.nz/ExternalIndex.htm` — shows 25 tenders per page in a table.
-- **Pagination**: `?page=2`, `?page=3`, etc.
-- **Detail pages**: `https://www.gets.govt.nz/{ORG_CODE}/ExternalTenderDetails.htm?id={NUMERIC_ID}` — contains the full description, metadata, category, and value.
-- **Table columns**: RFx ID, Reference, Title, Tender Type, Close Date, Organisation.
-
-The scraper does not use JavaScript rendering — GETS serves HTML directly. No need for Playwright or Selenium.
-
-### Pagination
-
-Default: crawls up to **11 pages** (275 tenders). Stops early if a page returns no results. Change via `max_pages` parameter:
-
-```python
-# In scraper/run.py, modify the run() call:
-tenders = scrape_gets(max_pages=5)   # fewer pages, faster run
-tenders = scrape_gets(max_pages=20)  # deeper crawl
-```
-
-### Date Parsing
-
-GETS uses various date formats. The scraper handles:
-- `15 Mar 2026 2:00 PM (NZDT)` — strips timezone parenthetical
-- `15 Mar 2026 14:00`
-- `15 Mar 2026`
-- `15/03/2026 2:00 PM`
-- `15/03/2026`
-
-All dates are stored as ISO format (`YYYY-MM-DD`) in the database.
-
-### Upsert Behaviour
-
-Tenders are upserted on the `gets_url` column (which has a unique constraint). This means:
-- **New tenders**: Inserted with all fields.
-- **Existing tenders**: Updated with the latest scraped data (description, status, enrichment, etc.).
-- This is safe to run multiple times — it will not create duplicates.
+Row Level Security is enabled. Both tables allow public reads (so the dashboard works with the anon key) and restrict writes to authenticated requests (the service role key, used by the scraper).
 
 ---
 
-## Configuration Reference
+## Customising GovRadar
 
-| What | Where | Default |
-|---|---|---|
-| Scrape delay between requests | `scraper/gets_scraper.py` line 24 (`DELAY`) | `2.5` seconds |
-| Maximum pages to crawl | `scraper/run.py` line 25 / `gets_scraper.py` `max_pages` param | `11` (275 tenders) |
-| Relevance keywords | `scraper/gets_scraper.py` lines 27-49 (`TARGET_KEYWORDS`) | 20 keywords |
-| AI model | `scraper/enricher.py` line 60 | `claude-sonnet-4-20250514` |
-| AI max tokens | `scraper/enricher.py` line 61 | `1024` |
-| AI delay between calls | `scraper/enricher.py` line 104 (`delay` param) | `1.0` seconds |
-| Description truncation (AI input) | `scraper/enricher.py` line 55 | `4000` chars |
-| Description truncation (DB storage) | `scraper/enricher.py` line 123 | `10000` chars |
-| Relevance profile | `scraper/enricher.py` lines 15-19 (`ENRICHMENT_PROMPT`) | Senior Tech BA / Integration |
-| Dashboard tender limit | `db/queries.py` line 14 (`limit` param) | `200` |
-| Dashboard detail cards shown | `app.py` line 99 (`df.head(20)`) | `20` |
-| High relevance threshold | `db/queries.py` line 90 | `70` |
-| GitHub Actions schedule | `.github/workflows/scrape.yml` line 7 | `30 18 * * *` (UTC) |
+### Change what gets scraped
 
----
+Edit `TARGET_KEYWORDS` in `scraper/gets_scraper.py` to widen or narrow the filter. Edit `max_pages` in `scraper/run.py` to control how deep into GETS the scraper goes (default: 11 pages = ~275 tenders).
 
-## Updating and Maintaining
+### Change the AI profile
 
-### Adding New Keywords
+Edit `ENRICHMENT_PROMPT` in `scraper/enricher.py`. Rewrite the user description. A data engineer's profile will produce very different scores from a project manager's.
 
-Edit the `TARGET_KEYWORDS` list in `scraper/gets_scraper.py`. Add or remove keywords as needed:
+### Change the AI model
 
-```python
-TARGET_KEYWORDS = [
-    "information technology",
-    "digital",
-    # ... existing keywords ...
-    "machine learning",     # add new ones
-    "AI",
-]
-```
+The model is set in `scraper/enricher.py` — currently `claude-sonnet-4-20250514`. You could swap to a different Claude model. Faster models cost less but may produce less nuanced analysis.
 
-Changes take effect on the next scrape run. Existing tenders in the database are not re-evaluated — only new scrapes use the updated keywords.
+### Change the schedule
 
-### Changing the AI Model
+Edit the cron expression in `.github/workflows/scrape.yml`. Default is `30 18 * * *` (UTC), which is ~7:30am NZST. Set it to `30 18 * * 1-5` for weekdays only, or `0 6,18 * * *` for twice daily.
 
-Edit `scraper/enricher.py` line 60:
+### Change the dashboard
 
-```python
-response = client.messages.create(
-    model="claude-sonnet-4-20250514",  # change this
-    max_tokens=1024,
-    ...
-)
-```
+Edit `app.py`. It's standard Streamlit — `st.tabs()` for navigation, `st.dataframe()` for tables, `st.bar_chart()` for charts, `st.expander()` for detail cards. Add new tabs, change the layout, adjust what columns show up. The top 20 tenders get expandable detail cards; change `df.head(20)` if you want more or fewer.
 
-### Adjusting the Scrape Schedule
+### Add a new field to the analysis
 
-Edit `.github/workflows/scrape.yml`:
-
-```yaml
-on:
-  schedule:
-    - cron: "30 18 * * *"    # change this — uses UTC, 5-field cron
-```
-
-Examples:
-- `"0 20 * * *"` — 8:00am NZST daily
-- `"30 18 * * 1-5"` — 7:30am NZST weekdays only
-- `"0 6,18 * * *"` — twice daily at 6pm and 6am UTC
-
-### Changing Pagination Depth
-
-Edit `scraper/run.py` line 25:
-
-```python
-tenders = scrape_gets(max_pages=11)  # change the number
-```
-
-Each page has ~25 tenders. More pages = longer runtime but catches older tenders.
-
-### Modifying Dashboard Layout
-
-Edit `app.py`. The dashboard uses standard Streamlit components:
-- `st.tabs()` for the main navigation
-- `st.dataframe()` for tables
-- `st.bar_chart()` for charts
-- `st.expander()` for tender detail cards
-- `st.sidebar` for filters
-
-### Adding New Database Columns
-
-1. Add the column in Supabase SQL Editor:
-   ```sql
-   alter table tenders add column new_field text;
-   ```
-2. Update `setup/schema.sql` to include the new column (for future fresh installs).
-3. Update `scraper/enricher.py` to include the new field in the enrichment prompt and parse it from Claude's response.
-4. Update `db/queries.py` if you need specific query support.
-5. Update `app.py` to display the new field in the dashboard.
+1. Add a column in Supabase: `alter table tenders add column new_field text;`
+2. Update `setup/schema.sql` so fresh installs include it
+3. Add the field to the Claude prompt in `scraper/enricher.py` and parse it from the response
+4. Display it in `app.py`
 
 ---
 
-## Architecture Decisions
+## How GETS works (for context)
 
-| Decision | Rationale |
+GETS ([gets.govt.nz](https://www.gets.govt.nz)) is the NZ government's official procurement portal. When a government agency wants to buy something — whether it's a $50 million IT transformation or a box of pens — they post a tender on GETS. Suppliers respond through the platform.
+
+Tender types you'll see:
+- **RFP** (Request for Proposal) — "we want to buy this, tell us how you'd do it and what it would cost"
+- **RFI** (Request for Information) — "we're thinking about buying something, tell us what's possible"
+- **ROI** (Registration of Interest) — "we might need something, raise your hand if you're interested"
+- **EOI** (Expression of Interest) — similar to ROI
+- **RFQ** (Request for Quotation) — "give us a price for this specific thing"
+
+For contractors, the important ones are RFPs and RFIs — they signal real programmes that will need people. ROIs and EOIs are earlier in the pipeline but still worth tracking.
+
+The scraper navigates GETS listing pages at `https://www.gets.govt.nz/ExternalIndex.htm` (paginated with `?page=N`), then follows each tender's link to its detail page at `https://www.gets.govt.nz/{ORG_CODE}/ExternalTenderDetails.htm?id={NUMERIC_ID}` to get the full description.
+
+---
+
+## Running costs
+
+This is designed to be cheap or free to run:
+
+| Component | Cost |
 |---|---|
-| **Requests + BeautifulSoup** (not Playwright) | GETS serves static HTML — no JS rendering needed. Simpler, faster, fewer dependencies. |
-| **Supabase** (not SQLite) | Shared with ContractRadar. Accessible from both GitHub Actions and Streamlit Cloud without file system. |
-| **Upsert on gets_url** | GETS URLs are unique per tender. Safe for repeated runs without duplicates. |
-| **Database views** for aggregations | Aggregation logic lives in PostgreSQL, not Python. Views auto-update as data changes. |
-| **Keyword pre-filter before AI** | Avoids sending every tender to Claude. Only relevant ones get enriched, saving API costs. |
-| **Description capped at 4,000 chars for AI** | Keeps Claude costs down. Most tender overviews are well under 4,000 chars. |
-| **Singleton Supabase client** | Same pattern as ContractRadar. One connection reused across all queries. |
-| **Streamlit** (not Next.js/React) | Fast to build, easy to deploy, good for data-heavy dashboards. Free hosting on Streamlit Cloud. |
+| Supabase | Free tier (plenty for this use case) |
+| Streamlit Cloud | Free for public apps |
+| GitHub Actions | Free for public repos |
+| Claude API | ~$0.10 to $1.50 per daily run, depending on how many relevant tenders are found |
+
+The only real cost is the Anthropic API. A month of daily runs typically costs $3-$45 depending on how active the tender pipeline is.
 
 ---
 
 ## Troubleshooting
 
-### "SUPABASE_URL and SUPABASE_KEY must be set"
-Your environment variables are not loaded. Make sure `.env` exists and contains valid values. If running via GitHub Actions, check that the secrets are set in the repo settings.
+**"SUPABASE_URL and SUPABASE_KEY must be set"** — your environment variables aren't loaded. Check `.env` exists locally, or check GitHub secrets for Actions.
 
-### Scraper finds 0 tenders
-- GETS may have changed their HTML structure. Check the listing table class name (`contentTable`) in `gets_scraper.py`.
-- The keyword list may be too narrow. Try adding broader terms.
-- GETS may be temporarily down.
+**Scraper finds 0 tenders** — either GETS is down, their HTML structure changed (check the table class name `contentTable` in `gets_scraper.py`), or the keywords are too narrow.
 
-### "Failed to parse Claude response"
-Claude occasionally returns malformed JSON. The enricher handles this gracefully by returning empty enrichment with `relevance_score: 0`. Check the logs for the specific tender.
+**Dashboard shows nothing** — run the scraper at least once. Check Supabase Table Editor to see if data is there. Make sure the key you're using has read access.
 
-### Dashboard shows no data
-- Run the scraper at least once to populate the database.
-- Check that the dashboard's `SUPABASE_KEY` has read access (the anon/publishable key works for reads).
-- Check the Supabase dashboard > Table Editor to verify data exists in the `tenders` table.
+**"Failed to parse Claude response"** — Claude occasionally produces malformed JSON. The enricher handles this gracefully by recording a relevance score of 0 with "Enrichment failed" as the reasoning. It won't crash the run.
 
-### GitHub Actions workflow not running
-- Check that the workflow file is on the `main` branch.
-- Verify secrets are set: Settings > Secrets and variables > Actions.
-- GitHub Actions cron schedules can have up to 15 minutes of delay.
-- You can always trigger manually from the Actions tab.
+**GitHub Actions not triggering** — make sure the workflow file is on the `main` branch, secrets are set, and note that GitHub cron schedules can have up to 15 minutes of delay.
 
-### RLS blocking writes
-If you get permission errors when the scraper tries to insert/update, you're likely using the anon key instead of the service role key. The scraper needs the **service role key** for write operations.
+**Permission errors on insert/update** — you're probably using the anon key instead of the service role key. The scraper needs write access.
 
 ---
 
-## Future Iterations
+## What's next
 
-- **PDF attachment parsing** — many tenders reference PDF documents with full RFP details. Parsing these would improve AI analysis accuracy.
-- **Email/Slack alerts** — notify when a high-relevance tender appears.
-- **Historical trend analysis** — track how agency spending patterns change over time.
-- **Advanced GETS search** — use the advanced search form to filter by specific UNSPSC categories instead of keyword matching.
-- **Re-enrichment** — re-run AI analysis on existing tenders when the relevance profile changes.
-- **Tender status tracking** — monitor open tenders for status changes (awarded, cancelled).
+Things that would make this better but aren't built yet:
+
+- **PDF parsing** — many tenders attach full RFP documents as PDFs. Parsing those would give the AI much more to work with and produce better analysis.
+- **Alerts** — email or Slack notification when a tender scoring 80+ appears.
+- **Trend tracking** — how is agency spending changing month over month? Are health tenders increasing? Is cloud adoption accelerating?
+- **Advanced GETS search** — instead of keyword matching, use the GETS advanced search form to filter by UNSPSC procurement categories directly.
+- **Re-scoring** — when you change your profile, re-run the AI on existing tenders so historical scores reflect your current priorities.
+- **Status monitoring** — track when open tenders get awarded or cancelled, and who won them.
+
+---
+
+## Relationship to ContractRadar
+
+GovRadar shares a Supabase project with [ContractRadar](https://github.com/phili/ContractRadar) (same database, different tables) and follows the same patterns — singleton database client, similar query layer, same deployment approach. ContractRadar watches the *demand* side (job listings on Seek), while GovRadar watches the *supply* side (government tenders on GETS). Together they give you both sides of the equation: what's being tendered now, and what roles are being hired for.
